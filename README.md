@@ -2,8 +2,7 @@
 
 This repository is depricated.
 
-The repository is continued publicly at: https://gitlab.strw.leidenuniv.nl/spz/amuse-tutorial
-
+The repository is continued publicly at: https://gitlab.strw.leidenuniv.nl/spz/Resonant_chain
 
 Method designed and constructed by
 -Shuo Huang
