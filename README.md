@@ -1,3 +1,9 @@
+# resonant-chain-decommissioned
+This script “shakes” adjacent planet pairs represented by AMUSE `Particles` set into mean-motion resonance, iterating outward to build a resonant chain. It reads an input system from HDF5, applies a migration-based resonance capture routine, and writes the updated system back to disk.
+
+This repository is depricated.
+The repository is continued publicly at: https://gitlab.strw.leidenuniv.nl/spz/Resonant_chain
+
 # Resonant Chain Generator
 
 This script “shakes” adjacent planet pairs represented by AMUSE `Particles` set into mean-motion resonance, iterating outward to build a resonant chain. It reads an input system from HDF5, applies a migration-based resonance capture routine, and writes the updated system back to disk.
