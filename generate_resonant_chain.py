@@ -6,15 +6,10 @@ import numpy as np
 
 from amuse.community.symple.interface import Symple
 from amuse.couple import bridge
-from amuse.ext.basicgraph import UnionFind
 from amuse.ext.orbital_elements import new_binary_from_orbital_elements, orbital_elements_from_binary
 from amuse.io import write_set_to_file, read_set_from_file
 from amuse.lab import Particles, Particle
 from amuse.units import units, constants, nbody_system, quantities
-
-
-STAR_MASS = 0.08 | units.MSun
-
 
 
 def semi_to_orbital_period(a, Mtot):
@@ -22,7 +17,7 @@ def semi_to_orbital_period(a, Mtot):
     Get orbital period from semi-major axis and total mass.
     Args:
         a (units.length):   Semi-major axis of the orbit.
-        Mtot (units.mass):  Total mass of the system (star + planet).
+        Mtot (units.mass):  Total mass of the system (host + planet).
     Returns:
         P (units.time): Orbital period of the system.
     """
@@ -33,7 +28,7 @@ def orbital_period_to_semi(P, Mtot):
     Get semi-major axis from orbital period and total mass.
     Args:
         P (units.time):     Orbital period of the system.
-        Mtot (units.mass):  Total mass of the system (star + planet).
+        Mtot (units.mass):  Total mass of the system (host + planet).
     Returns:
         a (units.length): Semi-major axis of the orbit.
     """
@@ -53,15 +48,15 @@ def resolve_merger(coll_set):
     remnant.velocity = coll_set.center_of_mass_velocity()
     return remnant
 
-def ZAMS_radius(star_mass) -> units.RSun:
+def ZAMS_radius(host_mass) -> units.RSun:
     """
     Define stellar radius at ZAMS.
     Args:
-        star_mass (units.mass): Mass of the star
+        host_mass (units.mass): Mass of the host
     Returns:
-        units.length: The ZAMS radius of the star
+        units.length: The ZAMS radius of the host
     """
-    mass_in_sun = star_mass.value_in(units.MSun)
+    mass_in_sun = host_mass.value_in(units.MSun)
     mass_sq = (mass_in_sun)**2.
 
     numerator = mass_in_sun**1.25 * (0.1148 + 0.8604 * mass_sq)
@@ -110,18 +105,15 @@ class CodeWithMigration():
             particles (Particles): The particles to update.
             dt (units.time): The time step for the kick.
         """
-        star = particles[particles.mass > STAR_MASS]
-        if len(star) != 1:
-            raise Exception(f"{len(star)} stars in the planetary system, cannot continue.")
+        host = particles[particles.mass.argmax()]
+        planets = particles - host
         
-        planets = particles - star
-        
-        dvx = planets.vx - star.vx
-        dvy = planets.vy - star.vy
-        dvz = planets.vz - star.vz
-        dx  = planets.x  - star.x
-        dy  = planets.y  - star.y
-        dz  = planets.z  - star.z
+        dvx = planets.vx - host.vx
+        dvy = planets.vy - host.vy
+        dvz = planets.vz - host.vz
+        dx  = planets.x  - host.x
+        dy  = planets.y  - host.y
+        dz  = planets.z  - host.z
         r2  = dx*dx + dy*dy + dz*dz
         
         ax  = 0.*dvx * (1 | units.s)**-1
@@ -202,11 +194,11 @@ def bring_planet_pair_in_resonance(planetary_system, outer_planet,
     Returns:
         Particles: The updated particles after creating the resonant pair.
     """
-    star = planetary_system[planetary_system.mass.argmax()]
-    planets = planetary_system - star
+    host = planetary_system[planetary_system.mass.argmax()]
+    planets = planetary_system - host
     first_planet = planets[0]
     last_planet = planets[1]
-    orbital_elements = orbital_elements_from_binary(star+planets[-1])
+    orbital_elements = orbital_elements_from_binary(host+planets[-1])
     Porbit = semi_to_orbital_period(orbital_elements[2], np.sum(orbital_elements[:2]))
 
     # set migration timescale
@@ -223,12 +215,13 @@ def bring_planet_pair_in_resonance(planetary_system, outer_planet,
         coll_sc = nbody.stopping_conditions.collision_detection
         coll_sc.enable()
 
-        ### Set radii for collision detection
-        p = nbody.particles
-        star_mask = p.mass > STAR_MASS
-        p[star_mask].radius = ZAMS_radius(p[star_mask].mass)
-        for planet in p[~star_mask]:
-            planet.radius = planet_radius(planet.mass)
+        if nbody.particles.radius.max() == 0 | units.RSun:
+            ### Set radii for collision detection
+            p = nbody.particles
+            host_mask = p.mass > (0.08 | units.MSun)
+            p[host_mask].radius = ZAMS_radius(p[host_mask].mass)
+            for planet in p[~host_mask]:
+                planet.radius = planet_radius(planet.mass)
 
     #setup nbody
     migration_code = CodeWithMigration(
@@ -264,21 +257,24 @@ def bring_planet_pair_in_resonance(planetary_system, outer_planet,
         if coll_check:
             if coll_sc.is_set():
                 print("!!! Collision Detected !!!")
-                coll_set = UnionFind()
-                for p, q in zip(coll_sc.particles(0), coll_sc.particles(1)):
-                    coll_set.union(p, q)
-                coll_set = coll_set.sets()
+                for ci in range(len(coll_sc.particles(0))):
+                    colliding_particles = Particles(
+                        particles=[
+                            coll_sc.particles(0)[ci],
+                            coll_sc.particles(1)[ci]
+                        ]
+                    )
                 
-                remnant = resolve_merger(coll_set)
-                nbody.particles.remove_particles(coll_sc.particles(0))
-                nbody.particles.remove_particles(coll_sc.particles(1))
-                nbody.particles.add_particle(remnant)
-                nbody.particles.synchronize_to(planetary_system)
+                    remnant = resolve_merger(colliding_particles)
+                    nbody.particles.remove_particles(coll_sc.particles(0))
+                    nbody.particles.remove_particles(coll_sc.particles(1))
+                    nbody.particles.add_particle(remnant)
+                    nbody.particles.synchronize_to(planetary_system)
                 
         channel_from_system_to_framework.copy()
         
-        orbit_a = orbital_elements_from_binary(star + first_planet)
-        orbit_b = orbital_elements_from_binary(star + last_planet)
+        orbit_a = orbital_elements_from_binary(host + first_planet)
+        orbit_b = orbital_elements_from_binary(host + last_planet)
         
         a1[i], e1[i] = orbit_a[2], orbit_a[3]
         a2[i], e2[i] = orbit_b[2], orbit_b[3]
@@ -298,8 +294,8 @@ def bring_planet_pair_in_resonance(planetary_system, outer_planet,
         for pi in planets:
             if outer_orbit is not None:
                 inner_orbit = outer_orbit
-            outer_orbit = orbital_elements_from_binary(star+pi)
-            P.append(semi_to_orbital_period(outer_orbit[2], star.mass))
+            outer_orbit = orbital_elements_from_binary(host+pi)
+            P.append(semi_to_orbital_period(outer_orbit[2], host.mass))
             a.append(outer_orbit[2])
             e.append(outer_orbit[3])
             i.append(outer_orbit[5]|units.deg)
@@ -323,7 +319,7 @@ def bring_planet_pair_in_resonance(planetary_system, outer_planet,
     return planetary_system
     
 def add_planet_in_resonant_chain(
-    bodies, name_star, sma, ecc, inc, 
+    bodies, name_host, sma, ecc, inc, 
     mplanet, Pratio=0, name="Aa", 
     tau_a=-1e5, t_evol=100, 
     n_steps=100
@@ -332,7 +328,7 @@ def add_planet_in_resonant_chain(
     Add a planet to a planetary system in a resonant chain.
     Args:
         bodies (Particles):    The particles representing the planetary system.
-        name_star (str):       Name of the star.
+        name_host (str):       Name of the host.
         sma (units.length):    Semi-major axis of the first planet.
         ecc (float):           Eccentricity of the first planet.
         inc (units.angle):     Inclination of the orbit.
@@ -345,29 +341,26 @@ def add_planet_in_resonant_chain(
     Returns:
         Particles: The updated particles after adding the planet in resonance.
     """
-    star = bodies[bodies.mass.argmax()]
-    planets = bodies - star
+    host = bodies[bodies.mass.argmax()]
+    planets = bodies - host
     if len(planets) == 0:
-        print(f"No planet exists, adding planet to star")
+        print(f"No planet exists, adding planet to host")
         bodies = new_binary_from_orbital_elements(
-            star.mass, mplanet, sma, ecc, inc=inc
+            host.mass, mplanet, sma, ecc, inc=inc
             )
-        bodies[0].type = "star"
-        bodies[0].name = name_star
+        bodies[0].type = "host"
+        bodies[0].name = name_host
         bodies[1].type = "planet"
         bodies[1].name = name
         orbital_elements = orbital_elements_from_binary(bodies)
         return bodies
 
-    star = bodies[bodies.mass.argmax()]
-    if len(star)!=1:
-        raise Exception(f"{len(star)} stars in the planetary system, cannot continue.")
-
-    planets = bodies - star
+    host = bodies[bodies.mass.argmax()]
+    planets = bodies - host
     last_planet = planets[-1]
-    orbital_elements = orbital_elements_from_binary(star+last_planet)
+    orbital_elements = orbital_elements_from_binary(host+last_planet)
     Porbit = semi_to_orbital_period(orbital_elements[2], np.sum(orbital_elements[:2]))
-    sma = orbital_period_to_semi(Porbit, star.mass+planets.mass.sum())
+    sma = orbital_period_to_semi(Porbit, host.mass+planets.mass.sum())
     print(f"outer orbital period: {Porbit.in_(units.yr)}, a={sma.in_(units.au)}")
     if Pratio>0:
         Pouter = Pratio*Porbit
@@ -443,19 +436,19 @@ def new_option_parser():
     result.add_option("--name", dest="name", 
                       default = "planet",
                       help="planet name [%default]")
-    result.add_option("--name_star", dest="name_star", 
+    result.add_option("--name_host", dest="name_host", 
                       default = "Sun",
                       help="stellar name [%default]")
-    result.add_option("-M", dest="Mstar", type="float", unit=units.MSun,
+    result.add_option("-M", dest="Mhost", type="float", unit=units.MSun,
                       default = -1|units.MSun,
-                      help="mass of the star [%default]")
+                      help="mass of the host [%default]")
     return result
     
 if __name__ in ('__main__', '__plot__'):
     o, arguments  = new_option_parser().parse_args()
 
     Pratio = -1
-    if o.Mstar<=0|units.MSun:
+    if o.Mhost<=0|units.MSun:
         bodies = read_set_from_file(o.infilename)
         if o.Pdenominator>0:
             Pratio = o.Pnominator / o.Pdenominator
@@ -463,13 +456,13 @@ if __name__ in ('__main__', '__plot__'):
             Pratio = o.period
     else:
         bodies = Particles(1)
-        bodies.type = "star"
-        bodies.mass = o.Mstar
-        bodies.name = o.name_star
+        bodies.type = "host"
+        bodies.mass = o.Mhost
+        bodies.name = o.name_host
 
     bodies = add_planet_in_resonant_chain(
         bodies,
-        o.name_star,
+        o.name_host,
         o.sma,
         o.ecc,
         o.inc, 

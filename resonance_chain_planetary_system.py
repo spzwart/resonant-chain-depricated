@@ -14,7 +14,6 @@ from amuse.units import units, constants
 from generate_resonant_chain import (
     bring_planet_pair_in_resonance, semi_to_orbital_period
 )
-from globals import _DEBUG_, particle_file, single_system
 
 
 def resonant_chain_planetary_system(bodies, tau_a, t_evol, n_steps) -> Particles:
@@ -54,16 +53,16 @@ def resonant_pair_planetary_system(
         t_evol (float):         Integration time in units of the outer orbital period.
         n_steps (int):          Number of steps for the integration.
     """
-    star = bodies[bodies.mass.argmax()]
-    planets = bodies - star
+    host = bodies[bodies.mass.argmax()]
+    planets = bodies - host
     for pi in planets:
-        kepler = orbital_elements(star + pi)
+        kepler = orbital_elements(host + pi)
         pi.sma = kepler[2]
 
     planet_a = planets[inner_planet_id]
     planet_b = planets[outer_planet_id]
-    Porb_a = semi_to_orbital_period(planet_a.sma, star.mass + planet_a.mass)[0]
-    Porb_b = semi_to_orbital_period(planet_b.sma, star.mass + planet_b.mass)[0]
+    Porb_a = semi_to_orbital_period(planet_a.sma, host.mass + planet_a.mass)[0]
+    Porb_b = semi_to_orbital_period(planet_b.sma, host.mass + planet_b.mass)[0]
     if np.isnan(Porb_a.value_in(units.s)) or np.isnan(Porb_b.value_in(units.s)):
         print("Ill-defined orbital periods, returning original bodies")
         return bodies
@@ -101,13 +100,23 @@ def new_option_parser():
     result.add_option("--tau", dest="tau_a", 
                       type="float", default = -1e5,
                       help="migration parameter (in terms of outer orbital period) [%default]")
+    result.add_option("--debug", dest="debug", 
+                      type="int", default = False,
+                      help="debug mode [%default]")
+    result.add_option("--single_system", dest="single_system", 
+                      type="int", default = True,
+                      help="process single system or multiple systems [%default]")
+    result.add_option("--particle_file", dest="particle_file", 
+                      default = "oligarch.amuse",
+                      help="input particle file [%default]")
+    
     return result
     
 if __name__ in ('__main__', '__plot__'):
     o, arguments  = new_option_parser().parse_args()
-    bodies = read_set_from_file(particle_file)
+    bodies = read_set_from_file(o.particle_file)
 
-    if single_system:
+    if o.single_system:
         if len(bodies)==2:
             print(f"System has 1 planet, no resonant chain to be created.")
 
@@ -124,7 +133,7 @@ if __name__ in ('__main__', '__plot__'):
         asteroids = bodies[bodies.mass == 0 | units.MSun].copy()
         bodies.remove_particles(asteroids)
 
-        if _DEBUG_:
+        if o.debug:
             print(f"Original attributes:")
             print(f"Masses: {bodies.mass}")
             p = bodies - host
@@ -141,7 +150,7 @@ if __name__ in ('__main__', '__plot__'):
             n_steps=o.n_steps
             )
         
-        if _DEBUG_:
+        if o.debug:
             host = bodies[bodies.mass.argmax()]
             p = bodies - host
             print(f"After shaking:")
@@ -197,7 +206,7 @@ if __name__ in ('__main__', '__plot__'):
                     p = system - host
                     
                     print(f"    System masses: {system.mass.in_(units.MJupiter)}")
-                    if _DEBUG_:
+                    if o.debug:
                         print(f"    Before:")
                         for pl in p:
                             ke = orbital_elements(pl + host, G=constants.G)
@@ -211,7 +220,7 @@ if __name__ in ('__main__', '__plot__'):
                         )
                     host = system[system.mass.argmax()]
 
-                    if _DEBUG_:
+                    if o.debug:
                         print(f"   After:")
                         p = system - host
                         for pl in p:
