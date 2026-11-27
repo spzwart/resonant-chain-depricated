@@ -105,6 +105,7 @@ class CodeWithMigration():
             particles (Particles): The particles to update.
             dt (units.time): The time step for the kick.
         """
+        host = particles[particles.mass.argmax()]
         planets = particles - host
         
         dvx = planets.vx - host.vx
